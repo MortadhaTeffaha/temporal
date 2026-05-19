@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/server/common/persistence/visibility/manager"
 	"go.temporal.io/server/common/resource"
 	"go.temporal.io/server/common/searchattribute"
+	"go.temporal.io/server/common/tqid"
 	"go.temporal.io/server/service/history/configs"
 	"go.temporal.io/server/service/history/consts"
 	"go.temporal.io/server/service/history/deletemanager"
@@ -123,6 +124,8 @@ func (t *transferQueueTaskExecutorBase) pushActivity(
 		return err
 	}
 
+	t.recordDispatchToMatchingLatency(task.NamespaceID, task.TaskQueue, enumspb.TASK_QUEUE_TYPE_ACTIVITY, task.VisibilityTimestamp)
+
 	if directive.GetUseAssignmentRules() == nil {
 		// activity is not getting a new build ID, so no need to update MS
 		return nil
@@ -176,6 +179,8 @@ func (t *transferQueueTaskExecutorBase) pushWorkflowTask(
 		return err
 	}
 
+	t.recordDispatchToMatchingLatency(task.NamespaceID, taskqueue.GetName(), enumspb.TASK_QUEUE_TYPE_WORKFLOW, task.VisibilityTimestamp)
+
 	if directive.GetUseAssignmentRules() == nil {
 		// assignment rules are not used, so no need to update MS
 		return nil
@@ -191,6 +196,38 @@ func (t *transferQueueTaskExecutorBase) pushWorkflowTask(
 		t.metricHandler,
 		t.logger,
 	)
+}
+
+// recordDispatchToMatchingLatency emits the time elapsed from when a transfer
+// task became visible (history scheduled-event time) to when it was successfully
+// dispatched to the matching service. This isolates the server-controlled portion
+// of schedule-to-start latency from the worker-pickup portion (already emitted as
+// asyncmatch_latency by the matching service).
+func (t *transferQueueTaskExecutorBase) recordDispatchToMatchingLatency(
+	namespaceID string,
+	taskQueueName string,
+	taskQueueType enumspb.TaskQueueType,
+	visibilityTimestamp time.Time,
+) {
+	// If the namespace can't be resolved, leave nsName empty. The metrics
+	// machinery (NamespaceTag in GetPerTaskQueueFamilyScope) converts the
+	// empty string to the canonical "_unknown_" placeholder, keeping the
+	// data point in Datadog instead of dropping it.
+	var nsName string
+	if nsEntry, err := t.registry.GetNamespaceByID(namespace.ID(namespaceID)); err == nil {
+		nsName = nsEntry.Name().String()
+	}
+	partition := tqid.UnsafeTaskQueueFamily(namespaceID, taskQueueName).TaskQueue(taskQueueType).RootPartition()
+
+	dispatchLatency := t.shardContext.GetTimeSource().Now().Sub(visibilityTimestamp)
+	metrics.TaskDispatchToMatchingLatency.With(
+		metrics.GetPerTaskQueuePartitionTypeScope(
+			t.metricHandler,
+			nsName,
+			partition,
+			t.config.BreakdownMetricsByTaskQueue(nsName, taskQueueName, taskQueueType),
+		),
+	).Record(dispatchLatency)
 }
 
 func (t *transferQueueTaskExecutorBase) processDeleteExecutionTask(

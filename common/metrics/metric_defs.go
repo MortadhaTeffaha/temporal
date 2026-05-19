@@ -787,8 +787,12 @@ var (
 		"task_errors_throttled",
 		WithDescription("The number of history task processing errors caused by resource exhausted errors, excluding workflow busy case."),
 	)
-	TaskCorruptionCounter       = NewCounterDef("task_errors_corruption")
-	TaskScheduleToStartLatency  = NewTimerDef("task_schedule_to_start_latency")
+	TaskCorruptionCounter         = NewCounterDef("task_errors_corruption")
+	TaskScheduleToStartLatency    = NewTimerDef("task_schedule_to_start_latency")
+	TaskDispatchToMatchingLatency = NewTimerDef(
+		"task_dispatch_to_matching_latency",
+		WithDescription("Latency from a transfer task becoming visible (history scheduled-event time) to its dispatch to the matching service. Server-controlled portion of schedule-to-start latency; excludes the worker-pickup portion which is already emitted as asyncmatch_latency."),
+	)
 	TaskBatchCompleteCounter    = NewCounterDef("task_batch_complete_counter")
 	TaskReschedulerPendingTasks = NewDimensionlessHistogramDef("task_rescheduler_pending_tasks")
 	PendingTasksCounter         = NewDimensionlessHistogramDef(
